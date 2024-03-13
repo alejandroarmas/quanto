@@ -35,8 +35,45 @@ def test_packed_udqmm(input_shape, output_features, dtype, device, bits):
     output = torch.ops.quanto.udqmm(input, packed_a, other_scale, bits)
     expected = torch.ops.aten.mm(input, unpacked_weights * other_scale)
 
+
     assert torch.equal(expected, output)
 
+
+
+@pytest.mark.parametrize("input_shape", [[10, 32], [32, 32]])
+@pytest.mark.parametrize("output_features", [48, 64])
+@pytest.mark.parametrize("bits", [2, 4])
+@pytest.mark.parametrize("dtype", [torch.float16, torch.float32])
+def test_combined_unpack_mm_kernel(input_shape, output_features, dtype, device, bits):
+    input = random_tensor(input_shape, dtype=dtype).to(device)
+
+    qmax = 2**bits
+    a = torch.randint(0, qmax, (input_shape[-1], output_features), dtype=torch.uint8).to(device)
+    packed_a = pack_weights(a, bits)
+    unpacked_weights = unpack_weights(packed_a, bits)
+
+    other_scale = random_tensor((output_features,), dtype=dtype).to(device)
+    output = torch.ops.quanto.combined_unpack_mm_kernel(input, packed_a, other_scale, bits)
+
+    """
+    This is a naive MM operation
+    This baseline helps us know we are 
+    on track
+    """
+    ar,ac = input.shape 
+    br,bc = (unpacked_weights * other_scale).shape
+    expected = torch.zeros(ar, bc, dtype=input.dtype)
+
+    def naive_mm(a, b, result):
+        for i in range(ar):         
+            for j in range(bc):     
+                for k in range(ac): 
+                    result[i,j] += a[i,k] * b[k,j]
+
+
+    naive_mm(input, (unpacked_weights * other_scale), expected)
+
+    assert torch.equal(expected, output)
 
 @pytest.mark.parametrize("input_shape", [[10, 32], [32, 32]])
 @pytest.mark.parametrize("output_features", [48, 64])
